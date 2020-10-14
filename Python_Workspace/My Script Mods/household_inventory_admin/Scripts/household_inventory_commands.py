@@ -16,6 +16,14 @@ def debug(_connection=None):
         len(build_buy.get_object_ids_in_household_inventory(services.active_household_id()))))
 
 
+@sims4.commands.Command('irql.move_sim_inventory_to_household', command_type=sims4.commands.CommandType.Live)
+def move_sim_inventory_to_household(_connection=None):
+    output = sims4.commands.CheatOutput(_connection)
+    active_sim = services.get_active_sim()
+    active_sim_info = services.active_sim_info()
+    output("Moving all items in {} {}'s inventory to household inventory.".format(active_sim_info.first_name, active_sim_info.last_name))
+    active_sim.inventory_component.push_items_to_household_inventory()
+
 @sims4.commands.Command('irql.move_household_inventory_to_sim', command_type=sims4.commands.CommandType.Live)
 def move_household_inventory_to_sim(_connection=None):
     output = sims4.commands.CheatOutput(_connection)
