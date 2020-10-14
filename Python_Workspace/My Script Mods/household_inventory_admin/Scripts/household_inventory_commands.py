@@ -6,7 +6,10 @@ from indexed_manager import ObjectIDError
 from objects.object_enums import ItemLocation
 from protocolbuffers import Consts_pb2
 
-
+"""
+Bugs:
+  * When moving paintings from household to sim inventory, the actual artwork is not preserved and turns into a blank canvas
+"""
 @sims4.commands.Command('irql.debug', command_type=sims4.commands.CommandType.Live)
 def debug(_connection=None):
     output = sims4.commands.CheatOutput(_connection)
