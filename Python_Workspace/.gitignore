@@ -1,0 +1,5 @@
+**.swp
+.idea
+**/__pycache__/**
+EA/*
+*/*/*.ts4script
