@@ -1,16 +1,19 @@
-import logging
 import os
 
+import ui
 import build_buy
 import objects
 import services
 import sims4.commands
+import sims4.log
 from indexed_manager import ObjectIDError
 from objects.gallery_tuning import ContentSource
 from objects.object_enums import ItemLocation
 from protocolbuffers import Consts_pb2
 
-VERSION = 1.005
+VERSION = 1.007
+
+logger = sims4.log.Logger('IrqlInventoryCommands', default_owner='irql')
 
 """
 NOTES:
@@ -22,13 +25,13 @@ NOTES:
     the business location)
 """
 
+
 class InventoryCommands:
-    _log_level = logging.INFO
-    _log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    NOTIFICATION = ui.ui_dialog_notification.UiDialogNotification.TunableFactory()
+    NOTIFICATION_TEXT = sims4.localization.TunableLocalizedStringFactory()
 
     def __init__(self, _connection):
         self._output = sims4.commands.CheatOutput(_connection)
-        self._logger = self._setup_logger()
 
     def try_to_run(self, command):
         try:
@@ -39,54 +42,46 @@ class InventoryCommands:
                 self._output("\t* " + v)
         pass
 
-    def _log_file_name(self):
-        return '{}.{}.log'.format(self.__class__.__name__, str(self._log_level))
-
-    def _log_file_path(self):
-        return os.path.join(os.path.dirname(os.path.realpath(__file__)), '..', '..', self._log_file_name())
-
-    def _setup_logger(self):
-        logger = logging.getLogger('Irql' + self.__class__.__name__)
-        if not logger.hasHandlers():
-            logger.setLevel(self._log_level)
-            fh = logging.FileHandler(self._log_file_path(), mode='a', encoding='utf-8')
-            fh.setLevel(self._log_level)
-            formatter = logging.Formatter(self._log_format)
-            fh.setFormatter(formatter)
-            logger.addHandler(fh)
-        return logger
-
     def print_version(self):
         self._output('Version: {}'.format(str(VERSION)))
 
     def print_item_counts(self):
         active_sim_info = services.active_sim_info()
-        self._output("Items in {} {}'s inventory: {}".format(active_sim_info.first_name, active_sim_info.last_name,
-                                                             len(services.get_active_sim().inventory_component)))
-        self._output('Items in household inventory: {}'.format(
-            len(build_buy.get_object_ids_in_household_inventory(services.active_household_id()))))
+        self._show_dialog("Items in {} {}'s inventory: {}\n"
+                          "Items in household inventory: {}".format(active_sim_info.first_name,
+                                                                    active_sim_info.last_name,
+                                                                    len(services.get_active_sim().inventory_component),
+                                                                    len(build_buy.get_object_ids_in_household_inventory(
+                                                                        services.active_household_id()))))
+
+    def _show_dialog(self, text):
+        loc_string = sims4.localization.LocalizationHelperTuning \
+            .get_new_line_separated_strings(text, self.NOTIFICATION_TEXT())
+        notification = self.NOTIFICATION(services.active_sim_info(),
+                                         text=lambda *_: loc_string)
+        notification.show_dialog()
 
     def move_sim_inventory_to_household(self):
         active_sim = services.get_active_sim()
         active_sim_info = services.active_sim_info()
-        self._output("Moving all items in {} {}'s inventory to household inventory.".format(active_sim_info.first_name,
-                                                                                            active_sim_info.last_name))
         active_sim.inventory_component.push_items_to_household_inventory()
+        self._show_dialog(
+            "Moved all items in {} {}'s inventory to household inventory.".format(active_sim_info.first_name,
+                                                                                  active_sim_info.last_name))
 
     def move_household_inventory_to_sim(self):
-        self._logger.debug('START OF INVENTORY MIGRATION')
+        logger.debug('START OF INVENTORY MIGRATION')
         active_sim = services.get_active_sim()
-        household = active_sim.household  # services.active_household()
+        household = active_sim.household
         object_ids = build_buy.get_object_ids_in_household_inventory(household.id)
+        moved_object_count = 0
         if len(object_ids) > 0:
-            active_sim_info = services.active_sim_info()
-            self._output("Moving {} items from household into {} {}'s inventory.".format(len(object_ids),
-                                                                                         active_sim_info.first_name,
-                                                                                         active_sim_info.last_name))
             total_cost = 0
             for object_id in object_ids:
-                _, cost = self._move_item_from_household_to_sims_inventory(object_id, active_sim, household)
+                was_success, cost = self._move_item_from_household_to_sims_inventory(object_id, active_sim, household)
                 total_cost += cost
+                if was_success:
+                    moved_object_count += 1
             # build_buy.remove_object_from_household_inventory() has the side-effect of bumping up
             # the current household funds as if we are performing a sale, when in reality we merely
             # want to move the object.
@@ -101,14 +96,18 @@ class InventoryCommands:
                                                   sim=active_sim,
                                                   require_full_amount=False):
                     self._output('WARN: failed to subtract final amount')
+            active_sim_info = services.active_sim_info()
+            self._show_dialog("Moved {} items from household into {} {}'s inventory.".format(moved_object_count,
+                                                                                             active_sim_info.first_name,
+                                                                                             active_sim_info.last_name))
         else:
-            self._output('No items found in household inventory.')
+            self._show_dialog('No items found in household inventory.')
 
     def _move_item_from_household_to_sims_inventory(self, object_id, active_sim, household):
         new_object = self._copy_object(object_id, household.id)
 
         if new_object is None:
-            self._logger.error('Failed to copy object {}'.format(str(new_object)))
+            logger.error('Failed to copy object {}', str(new_object))
             return False, 0
 
         inventory = active_sim.inventory_component
@@ -121,17 +120,16 @@ class InventoryCommands:
                 #
                 original_household_funds = household.funds.money
                 if not build_buy.remove_object_from_household_inventory(object_id, household):
-                    self._logger.error(
-                        'FAILED: remove_object_from_household_inventory on object {}'.format(str(new_object)))
+                    logger.error('FAILED: remove_object_from_household_inventory on object {}', str(new_object))
                     return False, 0  # don't destroy object if it was successfully added to sim inventory
                 else:
                     simolean_delta = household.funds.money - original_household_funds
                     if simolean_delta == 0:
-                        self._logger.warning('Defaulting to object cost of {}', new_object.base_value)
+                        logger.warning('Defaulting to object cost of {}', new_object.base_value)
                         simolean_delta = new_object.base_value
                     return True, simolean_delta
             else:
-                self._logger.error('FAILED: player_try_add_object on {}'.format(str(new_object)))
+                logger.error('FAILED: player_try_add_object on {}', str(new_object))
         # Destroy the copied object if we can't add it to sim inventory
         #
         new_object.destroy(cause='Removing orphaned object that cant be added to sim inventory')
@@ -143,32 +141,17 @@ class InventoryCommands:
             _, object_data = build_buy.get_definition_id_in_household_inventory(object_id, household_id)
             if object_data is None:
                 raise ObjectIDError('object_data is None')
-            self._logger.debug("===== OBJECT DATA =====\n{}".format(str(object_data)))
+            logger.debug("===== OBJECT DATA =====\n{}", str(object_data))
             obj = objects.system.create_object(object_data.guid, obj_id=object_id, obj_state=object_data.state_index,
                                                loc_type=ItemLocation.SIM_INVENTORY,
                                                content_source=ContentSource.HOUSEHOLD_INVENTORY_PROXY)
             obj.attributes = object_data.SerializeToString()
             obj.set_household_owner_id(household_id)
         except ObjectIDError as exc:
-            self._logger.error('Failed to create object: {}'.format(exc))
+            logger.error('Failed to create object: {}', exc)
         return obj
 
 
-@sims4.commands.Command('irql.v', command_type=sims4.commands.CommandType.Live)
-def version(_connection=None):
-    InventoryCommands(_connection).try_to_run('print_version')
-
-
-@sims4.commands.Command('irql.debug', command_type=sims4.commands.CommandType.Live)
-def debug(_connection=None):
-    InventoryCommands(_connection).try_to_run('print_item_counts')
-
-
-@sims4.commands.Command('irql.move_sim_inventory_to_household', command_type=sims4.commands.CommandType.Live)
-def move_sim_inventory_to_household(_connection=None):
-    InventoryCommands(_connection).try_to_run('move_sim_inventory_to_household')
-
-
-@sims4.commands.Command('irql.move_household_inventory_to_sim', command_type=sims4.commands.CommandType.Live)
-def move_household_inventory_to_sim(_connection=None):
-    InventoryCommands(_connection).try_to_run('move_household_inventory_to_sim')
+@sims4.commands.Command('irql.i', command_type=sims4.commands.CommandType.Live)
+def dispatch_inventory_command(command: str, _connection=None):
+    InventoryCommands(_connection).try_to_run(command)
