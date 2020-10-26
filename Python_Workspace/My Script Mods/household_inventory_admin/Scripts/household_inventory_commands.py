@@ -125,7 +125,7 @@ class InventoryCommands:
                 else:
                     simolean_delta = household.funds.money - original_household_funds
                     if simolean_delta == 0:
-                        logger.warning('Defaulting to object cost of {}', new_object.base_value)
+                        logger.warn('Defaulting to object cost of {}', new_object.base_value)
                         simolean_delta = new_object.base_value
                     return True, simolean_delta
             else:
@@ -155,3 +155,13 @@ class InventoryCommands:
 @sims4.commands.Command('irql.i', command_type=sims4.commands.CommandType.Live)
 def dispatch_inventory_command(command: str, _connection=None):
     InventoryCommands(_connection).try_to_run(command)
+
+
+@sims4.commands.Command('irql.i.move_household_inventory_to_sim', command_type=sims4.commands.CommandType.Live)
+def dispatch_inventory_command_print_item_counts(_connection=None):
+    InventoryCommands(_connection).try_to_run('move_household_inventory_to_sim')
+
+
+@sims4.commands.Command('irql.i.move_sim_inventory_to_household', command_type=sims4.commands.CommandType.Live)
+def dispatch_inventory_command_print_item_counts(_connection=None):
+    InventoryCommands(_connection).try_to_run('move_sim_inventory_to_household')
